@@ -70,6 +70,69 @@ export const createEffect = (
   };
 };
 
+// https://stackoverflow.com/a/50924506
+type TypeWithGeneric<T> = Action<T>;
+type extractGeneric<Type> = Type extends TypeWithGeneric<infer X> ? X : never;
+
+interface ActionsAny<P = any> {
+  [key: string]: P;
+}
+type Worker = <P>(
+  pattern: string,
+  worker: (p: Action<P>) => Generator<any, any, any>,
+  ...args: any[]
+) => any;
+
+/**
+ * Generator function that is used to a creator function for actions and workers.
+ * See examples below
+ *
+ * @param worker Effect creators such as takeEvery or takeLeading
+ *
+ * @example
+ * const createFxEvery = fxCreator(takeEvery);
+ * const fxEvery = createFxEvery({
+ *   fetchTicket: onFetchTicket,
+ * });
+ * export const {
+ *   fetchTicket
+ * } = fxEvery.actions;
+ */
+function fxCreator(worker?: Worker) {
+  function createFxHelper<Actions extends ActionsAny>(
+    fx: {
+      [key in keyof Actions]: Record<string, any> extends Actions[key] // ensures payload isn't inferred as {}
+        ? () => Generator<any, any, any>
+        : Actions[key] extends never
+          ? () => Generator<any, any, any>
+          : (payload: Actions[key]) => Generator<any, any, any>
+    },
+  ) {
+    const actions: {
+      [key in keyof Actions]: Record<string, any> extends Actions[key] // ensures payload isn't inferred as {}
+        ? () => Action
+        : Actions[key] extends never
+          ? () => Action
+          : (payload: extractGeneric<Actions[key]>) => Actions[key]
+    } = {} as any;
+    const sagas: { [key: string]: () => Generator<any, any, any> } = {};
+    Object.keys(fx).forEach((actionType) => {
+      const action = createAction(actionType);
+      const saga = worker
+        ? function* saga() {
+            yield worker(`${action}`, fx[actionType] as any);
+          }
+        : fx[actionType];
+      (actions as any)[`${action}`] = action;
+      (sagas as any)[`watch${action}`] = saga;
+    });
+
+    return { actions, sagas };
+  }
+
+  return createFxHelper;
+}
+
 interface EffectMap {
   [key: string]: Fn;
 }
